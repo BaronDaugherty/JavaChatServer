@@ -4,131 +4,136 @@ import java.util.*;
 
 public class RobustChatServer {
 	/*Instance Variables*/
-	private ArrayList<Client> clients;	//created a client class and changed the array list to hold those instead
+	private ArrayList<Client> clients;
 	
 	/*Inner Classes*/
-	private class ClientHandler implements Runnable{	//changed ClientHandler to private (only this needs access to it)
+	private class ClientHandler implements Runnable{
 		/*Instance Variables*/
-		private BufferedReader reader;		//made private
-		private Socket sock;				//made private
-		private InputStreamReader isReader;	//made private
-		private volatile boolean stop = false;	//this will allow us to stop the thread once a client disconnects
+		private BufferedReader reader;
+		private Socket sock;
+		private InputStreamReader isReader;
+		private volatile boolean stop = false;
 		
 		/*Constructors*/
 		public ClientHandler(Socket clientSocket){
-			try{
+			try{ //create a new socket for connections and reader for messages
 				sock = clientSocket;
 				isReader = new InputStreamReader(sock.getInputStream());
 				reader = new BufferedReader(isReader);
 			}//end try
-			catch(Exception ex){
+			catch(Exception ex){ //log any error
 				Logger.write(ex.getMessage());
 			}
 		}//end socket constructor
 		
 		/*Methods*/
-		public void run(){
-			while(!stop){	//while not stop
+		public void run(){ //override
+			while(!stop){	//while running
 				String message = "";
-				try{
+				try{	//try to read in a message and broadcast it
 					while((message = reader.readLine()) != null){
-						System.out.println("Read: " +message);
 						tellEveryone(getSock().getInetAddress(), message);
 					}//end inner while
 				}//end try
-				catch(SocketException se){	//catch a SocketException ("connection reset" when client closes)
-					System.out.println("Client disconnected from " +getSock().getInetAddress());	//let us know a client disconnected
-					stopMe();	//call stop me to terminate the run loop
-					removeClient(this); //remove the client thread from the list of threads
-					tellEveryone(sock.getInetAddress().toString() +" disconnected."); //address everyone that a user disconnected
+				catch(SocketException se){ //catch client disconnect
+					//stop the thread, clean up clients, and alert
+					stopMe();
+					removeClient(this);
+					tellEveryone(sock.getInetAddress().toString() +" disconnected.");
 				}
-				catch(Exception ex){
+				catch(Exception ex){ //log any other exception
 					Logger.write(ex.getMessage());
 				}
 			}//end outer while
 		}//end run method
-		public void stopMe(){	//this method will terminate the loop in run(the thread will complete it's run method and end)
-			stop = true;		//set stop to true
+		public void stopMe(){
+			//terminate thread
+			stop = true;
 		}//end stopMe method
 		public Socket getSock(){
-			return sock;	//return the socket associated with this client
+			//return the socket associated with this client
+			return sock;
 		}//end getSock method
 	}//end ClientHandler class
 	
 	/*Main Method*/
 	public static void main(String[] args){
+		//run the server
 		new RobustChatServer().go();
 	}//end main method
 	
 	/*Methods*/
 	public void go(){
-		System.out.println("Creating clients ArrayList...");
 		clients = new ArrayList<Client>();
-		try{
-			System.out.println("Creating ServerSocket...");
+		try{ //initialize networking
+			//create socket
 			ServerSocket serverSock = new ServerSocket(10000);
 			
-			while(true){
-				System.out.println("In main loop...");
+			while(true){ //the meat...
+				/*accept incoming connections, initialize writer for messages, 
+				start a new client thread, and alert of incoming connection*/
 				Socket clientSocket = serverSock.accept();
-				System.out.println("Client socket created...");
 				PrintWriter writer = new PrintWriter(clientSocket.getOutputStream());
-				System.out.println("Print writer created...");
-				System.out.println("Got a connection from " +clientSocket.getInetAddress());
 				ClientThread t = new ClientThread(new ClientHandler(clientSocket));
 				Client c = new Client(t.getTarget(), writer);
 				clients.add(c);	//add the Client to the ArrayList
 				t.start();
-				System.out.println("Telling everyone...");
 				tellEveryone(clientSocket.getInetAddress() +" connected."); //address everyone when a new user connects
-				
-				
 			}//end while
 		}//end try
-		catch(Exception ex){
-			//ex.printStackTrace();
+		catch(Exception ex){ //log any exception
 			Logger.write(ex.getMessage());
 		}
 	}//end go method
 	
+	//broadcast messages from clients
 	public void tellEveryone(InetAddress a,String message){
-		Iterator<Client> it = clients.iterator();	//changed Iterator to Iterator<PrintWriter> to ensure type safety
+		//setup a client list to iterate over
+		Iterator<Client> it = clients.iterator();
 		
-		while(it.hasNext()){
-			if(message.isEmpty() || message.matches("^\\s*$")){ //this checks if the message is empty ("") or contains only whitespace (regex: ^\s*$) and breaks (doesn't send) if it is
+		while(it.hasNext()){ //while there are clients...
+			//ignore empty messages
+			if(message.isEmpty() || message.matches("^\\s*$")){ 
 				break;
 			}
-			try{
+			try{ //try to write the message to the client
 				PrintWriter writer = it.next().getStream();
 				writer.println(a.toString() +": " +message);
 				writer.flush();
 			}//end try
-			catch(Exception ex){
+			catch(Exception ex){ //log any exception
 				Logger.write(ex.getMessage());
 			}
 		}//end while
 	}//end tellEveryone method
+	
+	//broadcast server messages
 	public void tellEveryone(String message){
+		//setup a client list to iterate over
 		Iterator<Client> it = clients.iterator();
 		
-		while(it.hasNext()){
-			try{
+		while(it.hasNext()){ //while there are clients to tell
+			try{ //try to write the message to the client
 				PrintWriter writer = it.next().getStream();
 				writer.println(message);
 				writer.flush();
 			}//end try
-			catch(Exception ex){
+			catch(Exception ex){ //log any exception
 				Logger.write(ex.getMessage());
 			}
 		}//end while
 	}//end tellEveryone method
+	
+	//clean up disconnected clients
 	public void removeClient(Runnable r){
+		//setup a client list to iterate over
 		Iterator<Client> it = clients.iterator();
 		
-		while(it.hasNext()){
-			if(it.next().getHandler().equals(r)) //if the clients runnable is the passed runnable (they share a handler)...
-				it.remove(); //remove the client
-				break;	//and call it good (no two clients will share a handler)
+		while(it.hasNext()){ //while there are clients
+			//if the passed runnable belongs to the client, remove them from the client list and stop
+			if(it.next().getHandler().equals(r)) 
+				it.remove();
+				break;
 		}//end while
 	}//end removeClient method
-}//end VerySimpleChatServer class
+}//end RobustChatServer class
